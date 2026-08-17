@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -167,7 +168,12 @@ fun AdminScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = employeeLogin, onValueChange = { employeeLogin = it }, label = { Text("Логин") })
-                OutlinedTextField(value = employeePassword, onValueChange = { employeePassword = it }, label = { Text("Пароль") })
+                OutlinedTextField(
+                    value = employeePassword,
+                    onValueChange = { employeePassword = it },
+                    label = { Text("Пароль") },
+                    visualTransformation = PasswordVisualTransformation()
+                )
             }
         }
         item {
@@ -227,7 +233,6 @@ fun EmployeeScreen(
     onLogout: () -> Unit
 ) {
     var selectedTable by remember { mutableStateOf<HallTable?>(null) }
-    var selectedDiscount by remember { mutableStateOf(0) }
     var now by remember { mutableStateOf(Instant.now()) }
 
     LaunchedEffect(Unit) {
@@ -241,8 +246,8 @@ fun EmployeeScreen(
         Text("Карта столов", style = MaterialTheme.typography.headlineSmall)
         Button(onClick = onLogout) { Text("Выйти") }
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            tables.forEach { table ->
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(tables) { table ->
                 val tableReceipts = receipts.filter { it.tableId == table.id && !it.closed }
                 val warn = tableReceipts.any {
                     it.timerStartedAt?.let { startedAt ->
@@ -269,13 +274,11 @@ fun EmployeeScreen(
         selectedTable?.let { table ->
             val tableReceipts = receipts.filter { it.tableId == table.id && !it.closed }
             Text("Выбран стол ${table.number}")
-            Button(onClick = { receipts.add(Receipt(tableId = table.id)) }) { Text("Открыть новый чек + таймер") }
-            Text("Скидка")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                ALLOWED_DISCOUNTS.forEach { d ->
-                    Button(onClick = { selectedDiscount = d }) { Text("$d%") }
-                }
-            }
+            Button(onClick = {
+                val receipt = Receipt(tableId = table.id)
+                receipt.timerStartedAt = Instant.now()
+                receipts.add(receipt)
+            }) { Text("Открыть новый чек + таймер") }
 
             LazyColumn(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 items(tableReceipts) { check ->
@@ -288,7 +291,11 @@ fun EmployeeScreen(
                                     Button(onClick = { check.items.add(ReceiptItem(mi, 1)) }) { Text("+") }
                                 }
                             }
-                            Button(onClick = { check.discount = selectedDiscount }) { Text("Применить скидку ${selectedDiscount}%") }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                ALLOWED_DISCOUNTS.forEach { d ->
+                                    Button(onClick = { check.discount = d }) { Text("Скидка $d%") }
+                                }
+                            }
 
                             val subtotal = check.items.sumOf { it.menuItem.price * it.qty }
                             val total = subtotal * (1 - check.discount / 100.0)
