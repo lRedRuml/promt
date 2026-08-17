@@ -17,6 +17,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -35,6 +36,7 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
+import java.security.MessageDigest
 import java.util.UUID
 
 class MainActivity : ComponentActivity() {
@@ -45,7 +47,12 @@ class MainActivity : ComponentActivity() {
 }
 
 enum class Role { ADMIN, EMPLOYEE }
-data class Employee(val id: String = UUID.randomUUID().toString(), val login: String, val password: String, val role: Role)
+class Employee(
+    val id: String = UUID.randomUUID().toString(),
+    val login: String,
+    val passwordHash: String,
+    val role: Role
+)
 data class HallTable(val id: String = UUID.randomUUID().toString(), val number: Int)
 data class MenuItem(val id: String = UUID.randomUUID().toString(), val name: String, val price: Double, val category: String)
 data class ReceiptItem(val menuItem: MenuItem, val qty: Int)
@@ -59,7 +66,14 @@ class Receipt(
     var cardPaid by mutableStateOf(0.0)
     var cashPaid by mutableStateOf(0.0)
     var closed by mutableStateOf(false)
-    var timerStartedAt by mutableStateOf(Instant.now())
+    var timerStartedAt by mutableStateOf<Instant?>(null)
+}
+
+private val ALLOWED_DISCOUNTS = listOf(10, 20, 30)
+
+private fun hashPassword(value: String): String {
+    val digest = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+    return digest.joinToString("") { "%02x".format(it) }
 }
 
 @Composable
@@ -76,7 +90,7 @@ fun PromtPosApp() {
             employees = employees,
             onLogin = { currentUser = it },
             onBootstrapAdmin = { login, password ->
-                val admin = Employee(login = login, password = password, role = Role.ADMIN)
+                val admin = Employee(login = login, passwordHash = hashPassword(password), role = Role.ADMIN)
                 employees.add(admin)
                 currentUser = admin
             }
@@ -112,7 +126,7 @@ fun LoginScreen(
             visualTransformation = PasswordVisualTransformation()
         )
         Button(onClick = {
-            val user = employees.find { it.login == login && it.password == password }
+            val user = employees.find { it.login == login && it.passwordHash == hashPassword(password) }
             if (user != null) onLogin(user) else error = "Неверные данные"
         }) { Text("Войти") }
         if (employees.isEmpty()) {
@@ -165,7 +179,13 @@ fun AdminScreen(
         item {
             Button(onClick = {
                 if (employeeLogin.isNotBlank() && employeePassword.isNotBlank()) {
-                    employees.add(Employee(login = employeeLogin, password = employeePassword, role = role))
+                    employees.add(
+                        Employee(
+                            login = employeeLogin,
+                            passwordHash = hashPassword(employeePassword),
+                            role = role
+                        )
+                    )
                     employeeLogin = ""; employeePassword = ""
                 }
             }) { Text("Добавить сотрудника") }
@@ -195,7 +215,7 @@ fun AdminScreen(
             }) { Text("Добавить позицию") }
         }
 
-        item { Text("Скидки: только 10%, 20%, 30%") }
+        item { Text("Скидки: только ${ALLOWED_DISCOUNTS.joinToString("%, ")}%") }
     }
 }
 
@@ -213,7 +233,7 @@ fun EmployeeScreen(
     LaunchedEffect(Unit) {
         while (true) {
             now = Instant.now()
-            delay(30_000)
+            delay(5_000)
         }
     }
 
@@ -225,11 +245,17 @@ fun EmployeeScreen(
             tables.forEach { table ->
                 val tableReceipts = receipts.filter { it.tableId == table.id && !it.closed }
                 val warn = tableReceipts.any {
-                    Duration.between(it.timerStartedAt, now).toMinutes() in 75..89
+                    it.timerStartedAt?.let { startedAt ->
+                        val minutes = Duration.between(startedAt, now).toMinutes()
+                        minutes >= 75 && minutes < 90
+                    } == true
                 }
                 Card(
                     modifier = Modifier.size(100.dp).clickable { selectedTable = table }
-                        .background(if (warn) Color.Red.copy(alpha = 0.3f) else Color.Transparent),
+                        .background(Color.Transparent),
+                    colors = CardDefaults.cardColors(
+                        containerColor = if (warn) Color.Red.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surface
+                    ),
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -246,7 +272,7 @@ fun EmployeeScreen(
             Button(onClick = { receipts.add(Receipt(tableId = table.id)) }) { Text("Открыть новый чек + таймер") }
             Text("Скидка")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf(10, 20, 30).forEach { d ->
+                ALLOWED_DISCOUNTS.forEach { d ->
                     Button(onClick = { selectedDiscount = d }) { Text("$d%") }
                 }
             }
