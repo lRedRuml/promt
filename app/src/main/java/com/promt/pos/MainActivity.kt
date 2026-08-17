@@ -21,15 +21,18 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -46,26 +49,22 @@ data class Employee(val id: String = UUID.randomUUID().toString(), val login: St
 data class HallTable(val id: String = UUID.randomUUID().toString(), val number: Int)
 data class MenuItem(val id: String = UUID.randomUUID().toString(), val name: String, val price: Double, val category: String)
 data class ReceiptItem(val menuItem: MenuItem, val qty: Int)
-data class Receipt(
+class Receipt(
     val id: String = UUID.randomUUID().toString(),
     val tableId: String,
     val createdAt: Instant = Instant.now(),
-    val items: MutableList<ReceiptItem> = mutableListOf(),
-    var discount: Int = 0,
-    var cardPaid: Double = 0.0,
-    var cashPaid: Double = 0.0,
-    var closed: Boolean = false,
-    var timerStartedAt: Instant = Instant.now()
-)
+) {
+    val items = mutableStateListOf<ReceiptItem>()
+    var discount by mutableStateOf(0)
+    var cardPaid by mutableStateOf(0.0)
+    var cashPaid by mutableStateOf(0.0)
+    var closed by mutableStateOf(false)
+    var timerStartedAt by mutableStateOf(Instant.now())
+}
 
 @Composable
 fun PromtPosApp() {
-    val employees = remember {
-        mutableStateListOf(
-            Employee(login = "admin", password = "admin", role = Role.ADMIN),
-            Employee(login = "staff", password = "1234", role = Role.EMPLOYEE)
-        )
-    }
+    val employees = remember { mutableStateListOf<Employee>() }
     val tables = remember { mutableStateListOf(HallTable(number = 1), HallTable(number = 2), HallTable(number = 3)) }
     val menu = remember { mutableStateListOf(MenuItem(name = "Кальян классический", price = 1500.0, category = "Кальяны")) }
     val receipts = remember { mutableStateListOf<Receipt>() }
@@ -73,7 +72,15 @@ fun PromtPosApp() {
     var currentUser by remember { mutableStateOf<Employee?>(null) }
 
     if (currentUser == null) {
-        LoginScreen(employees) { currentUser = it }
+        LoginScreen(
+            employees = employees,
+            onLogin = { currentUser = it },
+            onBootstrapAdmin = { login, password ->
+                val admin = Employee(login = login, password = password, role = Role.ADMIN)
+                employees.add(admin)
+                currentUser = admin
+            }
+        )
     } else if (currentUser?.role == Role.ADMIN) {
         AdminScreen(employees, tables, menu) { currentUser = null }
     } else {
@@ -82,7 +89,11 @@ fun PromtPosApp() {
 }
 
 @Composable
-fun LoginScreen(employees: List<Employee>, onLogin: (Employee) -> Unit) {
+fun LoginScreen(
+    employees: List<Employee>,
+    onLogin: (Employee) -> Unit,
+    onBootstrapAdmin: (String, String) -> Unit
+) {
     var login by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
@@ -94,11 +105,26 @@ fun LoginScreen(employees: List<Employee>, onLogin: (Employee) -> Unit) {
     ) {
         Text("Promt POS", style = MaterialTheme.typography.headlineMedium)
         OutlinedTextField(value = login, onValueChange = { login = it }, label = { Text("Логин") })
-        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Пароль") })
+        OutlinedTextField(
+            value = password,
+            onValueChange = { password = it },
+            label = { Text("Пароль") },
+            visualTransformation = PasswordVisualTransformation()
+        )
         Button(onClick = {
             val user = employees.find { it.login == login && it.password == password }
             if (user != null) onLogin(user) else error = "Неверные данные"
         }) { Text("Войти") }
+        if (employees.isEmpty()) {
+            Text("Сначала создайте администратора в админ-панели", color = Color.Gray)
+            Button(onClick = {
+                if (login.isNotBlank() && password.isNotBlank()) {
+                    onBootstrapAdmin(login, password)
+                } else {
+                    error = "Введите логин и пароль для первого администратора"
+                }
+            }) { Text("Создать первого администратора") }
+        }
         if (error.isNotBlank()) Text(error, color = Color.Red)
     }
 }
@@ -116,6 +142,7 @@ fun AdminScreen(
     var menuName by remember { mutableStateOf("") }
     var menuPrice by remember { mutableStateOf("") }
     var menuCategory by remember { mutableStateOf("Кальяны") }
+    var role by remember { mutableStateOf(Role.EMPLOYEE) }
 
     LazyColumn(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item { Text("Админ-панель", style = MaterialTheme.typography.headlineSmall) }
@@ -130,9 +157,15 @@ fun AdminScreen(
             }
         }
         item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { role = Role.EMPLOYEE }) { Text("Сотрудник") }
+                Button(onClick = { role = Role.ADMIN }) { Text("Админ") }
+            }
+        }
+        item {
             Button(onClick = {
                 if (employeeLogin.isNotBlank() && employeePassword.isNotBlank()) {
-                    employees.add(Employee(login = employeeLogin, password = employeePassword, role = Role.EMPLOYEE))
+                    employees.add(Employee(login = employeeLogin, password = employeePassword, role = role))
                     employeeLogin = ""; employeePassword = ""
                 }
             }) { Text("Добавить сотрудника") }
@@ -175,6 +208,14 @@ fun EmployeeScreen(
 ) {
     var selectedTable by remember { mutableStateOf<HallTable?>(null) }
     var selectedDiscount by remember { mutableStateOf(0) }
+    var now by remember { mutableStateOf(Instant.now()) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            now = Instant.now()
+            delay(30_000)
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Карта столов", style = MaterialTheme.typography.headlineSmall)
@@ -184,7 +225,7 @@ fun EmployeeScreen(
             tables.forEach { table ->
                 val tableReceipts = receipts.filter { it.tableId == table.id && !it.closed }
                 val warn = tableReceipts.any {
-                    Duration.between(it.timerStartedAt, Instant.now()).toMinutes() in 75..89
+                    Duration.between(it.timerStartedAt, now).toMinutes() in 75..89
                 }
                 Card(
                     modifier = Modifier.size(100.dp).clickable { selectedTable = table }
